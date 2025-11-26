@@ -203,7 +203,7 @@ def test_postgresql():
                 password=os.getenv('POSTGRES_PASSWORD', 'avengers_secret_2025'),
                 database='avengers_db',
                 host='localhost',
-                port=5432
+                port=5433  # 포트 변경
             )
             await conn.close()
             return True

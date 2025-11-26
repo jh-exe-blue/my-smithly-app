@@ -1,0 +1,146 @@
+version: '3.8'
+
+services:
+  # ═══════════════════════════════════════════════════════════
+  # 🗄️ DATABASES
+  # ═══════════════════════════════════════════════════════════
+  
+  # Vector Database - RAG의 심장
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: avengers-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    restart: unless-stopped
+
+  # PostgreSQL - 상태 저장, Langfuse 백엔드
+  postgres:
+    image: postgres:16-alpine
+    container_name: avengers-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: avengers
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-avengers_secret_2025}
+      POSTGRES_DB: avengers_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U avengers"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis - 캐싱, 세션, 큐
+  redis:
+    image: redis:7-alpine
+    container_name: avengers-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════
+  # 🔭 OBSERVABILITY
+  # ═══════════════════════════════════════════════════════════
+  
+  # Langfuse는 클라우드 기반으로 사용 (Self-hosted 대신)
+  # URL: https://us.cloud.langfuse.com
+  # Dashboard에서 API 키 확인 가능
+
+  # ═══════════════════════════════════════════════════════════
+  # 🤖 AI GATEWAY
+  # ═══════════════════════════════════════════════════════════
+  
+  # LiteLLM Proxy - 모든 LLM 통합 게이트웨이
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: avengers-litellm
+    ports:
+      - "4000:4000"
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-avengers-master-key}
+      # LLM API Keys
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      # Langfuse 클라우드 연동
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_HOST: ${LANGFUSE_BASE_URL}
+    volumes:
+      - ./config/litellm_config.yaml:/app/config.yaml
+    command: --config /app/config.yaml --detailed_debug
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════
+  # ⚡ WORKFLOW AUTOMATION
+  # ═══════════════════════════════════════════════════════════
+  
+  # n8n - AI 워크플로우 자동화
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: avengers-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=Asia/Seoul
+      - N8N_AI_ENABLED=true
+      # Database
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=avengers_db
+      - DB_POSTGRESDB_USER=avengers
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-avengers_secret_2025}
+      # AI Keys (n8n 내부 사용)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════
+  # 🧠 MEMORY LAYER
+  # ═══════════════════════════════════════════════════════════
+  
+  # Neo4j - mem0 그래프 메모리 백엔드 (선택적)
+  neo4j:
+    image: neo4j:5-community
+    container_name: avengers-neo4j
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-avengers_neo4j_2025}
+      NEO4J_PLUGINS: '["apoc"]'
+    volumes:
+      - neo4j_data:/data
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:
+  postgres_data:
+  redis_data:
+  n8n_data:
+  neo4j_data:
+
+networks:
+  default:
+    name: avengers-network
